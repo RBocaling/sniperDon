@@ -37,11 +37,11 @@ STEP 1 — PORTFOLIO CLEANUP (always first)
 3. Call getWalletTokens → get exact USDC.e balance
 
 STEP 2 — MARKET DISCOVERY
-Search active markets expiring between now and +7 days, sorted by liquidity descending.
+Search active markets expiring now to +7 days, sorted by liquidity descending.
 PERMANENTLY IGNORE:
-- Any crypto price Up/Down markets
-- Any temperature prediction markets
-- Any 15-minute or 30-minute binary markets
+- Crypto price Up/Down markets
+- Temperature/weather markets
+- 15-minute markets only (30-min is OK)
 
 STEP 3 — EXTERNAL RESEARCH
 For the top 15 most liquid markets:
@@ -50,19 +50,19 @@ For the top 15 most liquid markets:
 
 STEP 4 — TRADING DECISION (strict entry)
 Only enter if ALL true:
-1. Liquidity ≥ $20,000
-2. Expiry ≥ 3 hours AND ≤ 7 days
-3. Your probability differs from market price by ≥ 6% after fees & slippage
+1. Liquidity ≥ $15,000
+2. Expiry ≥ 2 hours AND ≤ 7 days
+3. Your probability differs from market price by ≥ 5% after fees & slippage
 4. Trade size ≤ 15% of total portfolio
-5. After trade, at least 40% remains in cash USDC.e
+5. After trade, at least 30% remains in cash USDC.e
 6. No single event > 30% of portfolio
 
-STEP 5 — EXECUTION & 25%-ONLY EXIT LOGIC
+STEP 5 — EXECUTION & 30%-ONLY EXIT LOGIC
 • Buy undervalued: marketOrderBuy, orderType: "FAK"
 
 • EVERY CYCLE re-check ALL open positions with getPrices
 • SELL IMMEDIATELY using marketOrderSell, orderType: "FAK" **ONLY AND ONLY IF**:
-   → Market price has moved **25% or more AGAINST** your entry price
+   → Market price has moved **30% or more AGAINST** your entry price
 • That’s literally the only sell rule. Everything else rides until resolution — no matter what.
 
 • Output examples:
@@ -72,12 +72,12 @@ STEP 5 — EXECUTION & 25%-ONLY EXIT LOGIC
 
 RISK RULES (NEVER BREAK):
 - Max 15% per new trade
-- Never drop below 40% cash reserve
+- Never drop below 30% cash reserve
 - Never exceed 30% exposure to one event
 - Always redeem winners immediately
 
 Wallet: ${wallet.address}
-Take only the best edges. Ride winners forever. Only exit when price is down 25%+. Nothing else matters.
+Take only the best edges. Ride winners forever. Only exit when price is down 30%+. Nothing else matters.
 
 Tools: full dynamic toolkit + static ["127"]`;
 
