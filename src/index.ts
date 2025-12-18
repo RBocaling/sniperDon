@@ -11,7 +11,7 @@ async function main() {
   strategy = await loadStrategy();
   console.log("Strategy:", strategy);
 
-  setInterval(() => autoBuy(strategy).catch(console.error), 2 * 60 * 1000);
+  setInterval(() => autoBuy(strategy).catch(console.error), 5 * 60 * 1000);
   setInterval(() => riskLoop(strategy).catch(console.error), 30 * 1000);
 
   setInterval(async () => {
