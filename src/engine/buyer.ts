@@ -19,14 +19,18 @@ export async function autoBuy(strategy: Strategy) {
     },
   ]);
 
+  
   const data = JSON.parse(res[0].content ?? "{}");
   const markets = data.payload ?? [];
+
 
   console.log("[SCAN] markets length:", markets.length);
 
   for (const m of markets) {
-    if (m.ready === false) continue;
-    if (m.restricted === true) continue;
+    const canMarketBuy = m.ready === true && m.restricted === false;
+    const canLimitBuy = m.rfqEnabled === true;
+    if (!canMarketBuy && !canLimitBuy) continue;
+
     if (!m.acceptingOrders) continue;
     if (m.closed) continue;
     if (!m.enableOrderBook) continue;
@@ -56,35 +60,65 @@ export async function autoBuy(strategy: Strategy) {
       } price=${price} edge=${edge} liquidity=${liquidity}`
     );
 
-    const size = Math.max(strategy.maxTradePct, Number(m.orderMinSize || 5));
+    const USD_PER_TRADE = 10; 
+
+    const minSharesByUsd = Math.ceil(USD_PER_TRADE / price);
+    const minSharesByMarket = Number(m.orderMinSize || 5);
+
+    const size = Math.max(minSharesByUsd, minSharesByMarket);
 
     if (!LIVE) {
       console.log("[SIM BUY]", tokenId, size);
       continue;
     }
 
-    const buyRes = await tools.callTools([
-      {
-        id: `buy-${Date.now()}`,
-        type: "function",
-        function: {
-          name: "polymarket--127--marketOrderBuy",
-          arguments: JSON.stringify({
-            payload: JSON.stringify({
-              tokenId,
-              size,
-              orderType: "FAK",
+    let buyRes;
+
+    if (canMarketBuy) {
+      buyRes = await tools.callTools([
+        {
+          id: `mkt-${Date.now()}`,
+          type: "function",
+          function: {
+            name: "polymarket--127--marketOrderBuy",
+            arguments: JSON.stringify({
+              payload: JSON.stringify({
+                tokenId,
+                size,
+                orderType: "FAK",
+              }),
             }),
-          }),
+          },
         },
-      },
-    ]);
+      ]);
+    } else {
+      const limitPrice = Number(m.bestAsk ?? price);
+
+      buyRes = await tools.callTools([
+        {
+          id: `lmt-${Date.now()}`,
+          type: "function",
+          function: {
+            name: "polymarket--127--limitOrderBuy",
+            arguments: JSON.stringify({
+              payload: JSON.stringify({
+                tokenId,
+                price: limitPrice,
+                size,
+                orderType: "GTC",
+              }),
+            }),
+          },
+        },
+      ]);
+    }
+
 
     const parsed = JSON.parse(buyRes[0]?.content ?? "{}");
     const txId = parsed?.payload?.txId;
 
     if (!txId) {
-      console.log("[SKIP BUY] Market not executable via API");
+      console.log("[SKIP BUY] No txId", m.question ?? m.title);
       continue;
     }
 

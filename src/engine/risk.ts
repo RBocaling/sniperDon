@@ -25,7 +25,7 @@ export async function riskLoop(strategy: Strategy) {
   const data = JSON.parse(res[0].content ?? "{}");
   const positions = data.payload ?? [];
 
-  console.log("[RISK] positions:", positions.length);
+  console.log("[RISK] positions:", positions);
 
   for (const p of positions) {
     const tokenId = p.asset;
@@ -69,12 +69,13 @@ export async function riskLoop(strategy: Strategy) {
 
     if (pnl <= strategy.stopLoss) {
       console.log("CUTLOSS:", p.title, pnl);
-      await executeSell(tokenId, size);
+      await executeSell(tokenId, size, price);
     }
 
     if (pnl >= strategy.takeProfit) {
       console.log("TAKE PROFIT:", p.title, pnl);
-      await executeSell(tokenId, size);
+      await executeSell(tokenId, size, price);
     }
+
   }
 }
