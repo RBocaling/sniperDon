@@ -60,7 +60,7 @@ export async function autoBuy(strategy: Strategy) {
       } price=${price} edge=${edge} liquidity=${liquidity}`
     );
 
-    const USD_PER_TRADE = 10; 
+    const USD_PER_TRADE = 5; 
 
     const minSharesByUsd = Math.ceil(USD_PER_TRADE / price);
     const minSharesByMarket = Number(m.orderMinSize || 5);
