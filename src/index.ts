@@ -11,7 +11,7 @@ const provider = new JsonRpcProvider(process.env.POLYGON_RPC!);
 const wallet = new Wallet(process.env.POLYGON_PRIVATE_KEY!, provider);
 
 const SCAN_INTERVAL_MS = 60_000;
-const TRADE_USD = Number(process.env.MAX_TRADE_USD || 1);
+const TRADE_USD = Number(3);
 
 const MIN_LIQ = 6_000;
 const MIN_PRICE = 0.06;
