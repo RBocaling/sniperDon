@@ -1,8 +1,50 @@
+import OpenAI from "openai";
 import { tools, txnApi, wallet, LIVE } from "../polymarket/client";
-import { Strategy } from "../ai/strategy";
 
-export async function autoBuy(strategy: Strategy) {
-  const res = await tools.callTools([
+const ai = new OpenAI({
+  apiKey: process.env.GROK_API_KEY!,
+  baseURL: "https://api.x.ai/v1",
+});
+
+const AI_PROMPT = `
+You are a Polymarket research analyst.
+
+Focus ONLY on:
+- sports
+- entertainment
+- politics
+
+Ignore permanently:
+- crypto price up/down
+- weather
+- <15-minute markets
+
+For the top 15–20 most liquid markets:
+- Research quickly (news / X / recent events)
+- Estimate true probability
+- Compare vs market price
+
+Return STRICT JSON ONLY:
+
+{
+  "buys": [
+    {
+      "tokenId": string,
+      "confidence": number,
+      "reason": string
+    }
+  ]
+}
+
+Rules:
+- Max 1 buy
+- confidence >= 0.65
+- No execution
+- No sell
+`;
+
+export async function autoBuy() {
+  const scan = await tools.callTools([
     {
       id: "scan",
       type: "function",
@@ -11,123 +53,78 @@ export async function autoBuy(strategy: Strategy) {
         arguments: JSON.stringify({
           payload: JSON.stringify({
             active: true,
-            limit: 20,
             sort: "liquidity",
+            limit: 30,
           }),
         }),
       },
     },
   ]);
 
+  const markets = JSON.parse(scan[0].content ?? "{}").payload ?? [];
+
+  const aiRes = await ai.chat.completions.create({
+    model: "grok-4-1-fast-reasoning",
+    temperature: 0.1,
+    max_tokens: 300,
+    messages: [
+      { role: "system", content: AI_PROMPT },
+      { role: "user", content: JSON.stringify(markets) },
+    ],
+  });
+
+  const decision = JSON.parse(aiRes.choices[0].message.content ?? "{}");
+  const pick = decision?.buys?.[0];
+
+  console.log("pick", pick);
   
-  const data = JSON.parse(res[0].content ?? "{}");
-  const markets = data.payload ?? [];
+  if (!pick) return;
 
+  const market = markets.find((m: any) =>
+    JSON.parse(m.clobTokenIds || "[]").includes(pick.tokenId)
+  );
+  if (!market) return;
 
-  console.log("[SCAN] markets length:", markets.length);
+  console.log("market", market);
+  
+  const price = Number(market.lastTradePrice);
+  if (!price || price <= 0 || price >= 1) return;
 
-  for (const m of markets) {
-    const canMarketBuy = m.ready === true && m.restricted === false;
-    const canLimitBuy = m.rfqEnabled === true;
-    if (!canMarketBuy && !canLimitBuy) continue;
+  const USD_PER_TRADE = 5;
+  const size = Math.ceil(USD_PER_TRADE / price);
 
-    if (!m.acceptingOrders) continue;
-    if (m.closed) continue;
-    if (!m.enableOrderBook) continue;
-
-    const liquidity = Number(m.liquidityNum ?? m.liquidity);
-    if (liquidity < 8_000) continue;
-
-    let tokenIds: string[] = [];
-    try {
-      tokenIds = JSON.parse(m.clobTokenIds ?? "[]");
-    } catch {
-      continue;
-    }
-
-    const tokenId = tokenIds[0];
-    if (!tokenId) continue;
-
-    const price = Number(m.lastTradePrice);
-    if (!price || price <= 0 || price >= 1) continue;
-
-    const edge = strategy.minEdge;
-    if (price + edge <= price) continue;
-
-    console.log(
-      `[CHECK] ${
-        m.question ?? m.title ?? m.slug
-      } price=${price} edge=${edge} liquidity=${liquidity}`
-    );
-
-    const USD_PER_TRADE = 5; 
-
-    const minSharesByUsd = Math.ceil(USD_PER_TRADE / price);
-    const minSharesByMarket = Number(m.orderMinSize || 5);
-
-    const size = Math.max(minSharesByUsd, minSharesByMarket);
-
-    if (!LIVE) {
-      console.log("[SIM BUY]", tokenId, size);
-      continue;
-    }
-
-    let buyRes;
-
-    if (canMarketBuy) {
-      buyRes = await tools.callTools([
-        {
-          id: `mkt-${Date.now()}`,
-          type: "function",
-          function: {
-            name: "polymarket--127--marketOrderBuy",
-            arguments: JSON.stringify({
-              payload: JSON.stringify({
-                tokenId,
-                size,
-                orderType: "FAK",
-              }),
-            }),
-          },
-        },
-      ]);
-    } else {
-      const limitPrice = Number(m.bestAsk ?? price);
-
-      buyRes = await tools.callTools([
-        {
-          id: `lmt-${Date.now()}`,
-          type: "function",
-          function: {
-            name: "polymarket--127--limitOrderBuy",
-            arguments: JSON.stringify({
-              payload: JSON.stringify({
-                tokenId,
-                price: limitPrice,
-                size,
-                orderType: "GTC",
-              }),
-            }),
-          },
-        },
-      ]);
-    }
-
-
-    const parsed = JSON.parse(buyRes[0]?.content ?? "{}");
-    const txId = parsed?.payload?.txId;
-
-    if (!txId) {
-      console.log("[SKIP BUY] No txId", m.question ?? m.title);
-      continue;
-    }
-
-    await txnApi.signAndSendTransaction(txId, {
-      address: wallet.address,
-      sendTransaction: (tx) => wallet.sendTransaction(tx),
-      signTypedData: wallet.signTypedData.bind(wallet),
-    });
-
-    console.log("✅ BOUGHT:", m.question ?? m.title);
+  if (!LIVE) {
+    console.log("[SIM BUY]", pick.tokenId, size, pick.reason);
+    return;
   }
+
+  const buyRes = await tools.callTools([
+    {
+      id: `buy-${Date.now()}`,
+      type: "function",
+      function: {
+        name: "polymarket--127--marketOrderBuy",
+        arguments: JSON.stringify({
+          payload: JSON.stringify({
+            tokenId: pick.tokenId,
+            size,
+            orderType: "FAK",
+          }),
+        }),
+      },
+    },
+  ]);
+
+  console.log("buyRes", buyRes);
+  
+  const txId = JSON.parse(buyRes[0].content ?? "{}")?.payload?.txId;
+  if (!txId) return;
+
+  await txnApi.signAndSendTransaction(txId, {
+    address: wallet.address,
+    sendTransaction: (tx) => wallet.sendTransaction(tx),
+    signTypedData: wallet.signTypedData.bind(wallet),
+  });
+
+  console.log("✅ BOUGHT:", market.title);
 }
