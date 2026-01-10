@@ -193,6 +193,12 @@ async function exitPosition(
   }
 }
 
+function isEventEnded(p: any): boolean {
+  if (!p.endDate) return false;
+  const end = new Date(p.endDate).getTime();
+  return Date.now() >= end;
+}
+
 async function riskLoop() {
   if (openPositions.size === 0) return;
 
@@ -219,14 +225,30 @@ async function riskLoop() {
     const cur = Number(p.curPrice);
     const val = Number(p.currentValue);
 
-    if (!isNum(avg) || !isNum(cur) || val < MIN_SELL_VALUE) continue;
+    if (!isNum(avg) || !isNum(cur) || !isNum(val)) continue;
+    if (val < MIN_SELL_VALUE) continue;
 
+    //  EVENT ENDED → FORCE EXIT
+    if (isEventEnded(p)) {
+      await exitPosition(p.asset, p.size, val, "EVENT ENDED");
+      continue;
+    }
+
+    // NORMAL TP / SL
     const pnl = pct(cur, avg);
 
-    if (pnl >= TP) await exitPosition(p.asset, p.size, val, "TAKE PROFIT");
-    if (pnl <= SL) await exitPosition(p.asset, p.size, val, "STOP LOSS");
+    if (pnl >= TP) {
+      await exitPosition(p.asset, p.size, val, "TAKE PROFIT");
+      continue;
+    }
+
+    if (pnl <= SL) {
+      await exitPosition(p.asset, p.size, val, "STOP LOSS");
+      continue;
+    }
   }
 }
+
 
 async function cycle() {
   await riskLoop();
