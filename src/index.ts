@@ -11,7 +11,7 @@ const provider = new JsonRpcProvider(process.env.POLYGON_RPC!);
 const wallet = new Wallet(process.env.POLYGON_PRIVATE_KEY!, provider);
 
 const SCAN_INTERVAL_MS = 60_000;
-const RISK_INTERVAL_MS = 5_000;
+const RISK_INTERVAL_MS = 30_000;
 
 const TRADE_USD = Number(5);
 
@@ -29,6 +29,7 @@ const MIN_SELL_VALUE = 1;
 
 const openPositions = new Set<string>();
 const locks = new Set<string>();
+const redeemedAssets = new Set<string>();
 
 const isNum = (v: any) => typeof v === "number" && Number.isFinite(v);
 const pct = (cur: number, avg: number) => (cur - avg) / avg;
@@ -229,9 +230,18 @@ async function riskLoop() {
     : [];
 
   for (const p of positions) {
-    if (!p.asset || !p.size) continue;
+    if (!p.asset || !isNum(p.size) || p.size <= 0) continue;
 
-    if (p.redeemable) {
+    const val = Number(p.currentValue);
+
+    if (
+      p.redeemable === true &&
+      isNum(val) &&
+      val > MIN_SELL_VALUE &&
+      !redeemedAssets.has(p.asset)
+    ) {
+      redeemedAssets.add(p.asset);
+
       await tools.callTools([
         {
           id: `redeem-${Date.now()}`,
@@ -247,24 +257,28 @@ async function riskLoop() {
           },
         },
       ]);
+
       openPositions.delete(p.asset);
       console.log("REDEEM:", p.asset);
       continue;
     }
 
+    if (val <= MIN_SELL_VALUE) continue;
+
     const avg = Number(p.avgPrice);
     const cur = Number(p.curPrice);
-    const val = Number(p.currentValue);
     if (!isNum(avg) || !isNum(cur)) continue;
 
     const pnl = pct(cur, avg);
 
     if (pnl >= TP)
       await exitPosition(p.asset, Number(p.size), val, "TAKE PROFIT");
+
     if (pnl <= SL)
       await exitPosition(p.asset, Number(p.size), val, "STOP LOSS");
   }
 }
+
 
 setInterval(riskLoop, RISK_INTERVAL_MS);
 setInterval(async () => {
