@@ -205,82 +205,82 @@ async function exitPosition(
   }
 }
 
-async function riskLoop() {
-  const res = await tools.callTools([
-    {
-      id: "positions",
-      type: "function",
-      function: {
-        name: "polymarket--127--getUserPositions",
-        arguments: JSON.stringify({
-          payload: JSON.stringify({
-            user: wallet.address,
-            limit: 50,
-          }),
-        }),
-      },
-    },
-  ]);
+// async function riskLoop() {
+//   const res = await tools.callTools([
+//     {
+//       id: "positions",
+//       type: "function",
+//       function: {
+//         name: "polymarket--127--getUserPositions",
+//         arguments: JSON.stringify({
+//           payload: JSON.stringify({
+//             user: wallet.address,
+//             limit: 50,
+//           }),
+//         }),
+//       },
+//     },
+//   ]);
 
-  const raw = JSON.parse(res[0].content ?? "{}").payload;
-  const positions = Array.isArray(raw)
-    ? raw
-    : Array.isArray(raw?.positions)
-    ? raw.positions
-    : [];
+//   const raw = JSON.parse(res[0].content ?? "{}").payload;
+//   const positions = Array.isArray(raw)
+//     ? raw
+//     : Array.isArray(raw?.positions)
+//     ? raw.positions
+//     : [];
 
-  for (const p of positions) {
-    if (!p.asset || !isNum(p.size) || p.size <= 0) continue;
+//   for (const p of positions) {
+//     if (!p.asset || !isNum(p.size) || p.size <= 0) continue;
 
-    const val = Number(p.currentValue);
+//     const val = Number(p.currentValue);
 
-    if (
-      p.redeemable === true &&
-      isNum(val) &&
-      val > MIN_SELL_VALUE &&
-      !redeemedAssets.has(p.asset)
-    ) {
-      redeemedAssets.add(p.asset);
+//     if (
+//       p.redeemable === true &&
+//       isNum(val) &&
+//       val > MIN_SELL_VALUE &&
+//       !redeemedAssets.has(p.asset)
+//     ) {
+//       redeemedAssets.add(p.asset);
 
-      await tools.callTools([
-        {
-          id: `redeem-${Date.now()}`,
-          type: "function",
-          function: {
-            name: "polymarket--127--redeemPosition",
-            arguments: JSON.stringify({
-              payload: JSON.stringify({
-                conditionId: p.conditionId,
-                tokenId: p.asset,
-              }),
-            }),
-          },
-        },
-      ]);
+//       await tools.callTools([
+//         {
+//           id: `redeem-${Date.now()}`,
+//           type: "function",
+//           function: {
+//             name: "polymarket--127--redeemPosition",
+//             arguments: JSON.stringify({
+//               payload: JSON.stringify({
+//                 conditionId: p.conditionId,
+//                 tokenId: p.asset,
+//               }),
+//             }),
+//           },
+//         },
+//       ]);
 
-      openPositions.delete(p.asset);
-      console.log("REDEEM:", p.asset);
-      continue;
-    }
+//       openPositions.delete(p.asset);
+//       console.log("REDEEM:", p.asset);
+//       continue;
+//     }
 
-    if (val <= MIN_SELL_VALUE) continue;
+//     if (val <= MIN_SELL_VALUE) continue;
 
-    const avg = Number(p.avgPrice);
-    const cur = Number(p.curPrice);
-    if (!isNum(avg) || !isNum(cur)) continue;
+//     const avg = Number(p.avgPrice);
+//     const cur = Number(p.curPrice);
+//     if (!isNum(avg) || !isNum(cur)) continue;
 
-    const pnl = pct(cur, avg);
+//     const pnl = pct(cur, avg);
 
-    if (pnl >= TP)
-      await exitPosition(p.asset, Number(p.size), val, "TAKE PROFIT");
+//     if (pnl >= TP)
+//       await exitPosition(p.asset, Number(p.size), val, "TAKE PROFIT");
 
-    if (pnl <= SL)
-      await exitPosition(p.asset, Number(p.size), val, "STOP LOSS");
-  }
-}
+//     if (pnl <= SL)
+//       await exitPosition(p.asset, Number(p.size), val, "STOP LOSS");
+//   }
+// }
 
 
-setInterval(riskLoop, RISK_INTERVAL_MS);
+// setInterval(riskLoop, RISK_INTERVAL_MS);
 setInterval(async () => {
   const markets = await scanMarkets();
   for (const m of markets) await tryBuy(m);
