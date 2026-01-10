@@ -11,17 +11,19 @@ const provider = new JsonRpcProvider(process.env.POLYGON_RPC!);
 const wallet = new Wallet(process.env.POLYGON_PRIVATE_KEY!, provider);
 
 const SCAN_INTERVAL_MS = 60_000;
-const TRADE_USD = Number(3);
+const RISK_INTERVAL_MS = 5_000;
+
+const TRADE_USD = Number(5);
 
 const MIN_LIQ = 6_000;
 const MIN_PRICE = 0.06;
-const MAX_PRICE = 0.4;
+const MAX_PRICE = 0.8;
 const MAX_SPREAD = 0.015;
-const MIN_24H_VOL = 300;
+const MIN_24H_VOL = 1_000;
 
-const EDGE_THRESHOLD = 0.045;
+const EDGE_THRESHOLD = 0.07;
 
-const TP = 0.4;
+const TP = 0.7;
 const SL = -0.3;
 const MIN_SELL_VALUE = 1;
 
@@ -47,7 +49,6 @@ function pickTokenId(m: any): string | null {
 function computeEdge(m: any): number {
   const price = Number(m.lastTradePrice ?? m.bestAsk ?? m.bestBid);
   if (!isNum(price) || !Array.isArray(m.outcomes)) return 0;
-
   const fair = 1 / m.outcomes.length;
   return Math.abs(price - fair) / fair;
 }
@@ -58,12 +59,10 @@ function scoreMarket(m: any): number {
   const price = Number(m.lastTradePrice ?? m.bestAsk ?? m.bestBid);
   const spread = Number(m.spread);
   const v24 = Number(m.volume24hr ?? m.volume);
-  const h1 = Number(m.oneHourPriceChange);
 
   if (isNum(price) && price >= MIN_PRICE && price <= MAX_PRICE) s++;
   if (isNum(spread) && spread <= MAX_SPREAD) s++;
   if (isNum(v24) && v24 >= MIN_24H_VOL) s++;
-  if (isNum(h1) && h1 > 0) s++;
 
   return s;
 }
@@ -103,10 +102,9 @@ async function scanMarkets(): Promise<any[]> {
     if (!isNum(liq) || liq < MIN_LIQ) return false;
 
     const edge = computeEdge(m);
-    
     if (!isNum(edge) || edge < EDGE_THRESHOLD) return false;
 
-    return scoreMarket(m) >= 4;
+    return scoreMarket(m) >= 3;
   });
 
   console.log("filtered market:", filtered.length);
@@ -249,7 +247,6 @@ async function riskLoop() {
           },
         },
       ]);
-
       openPositions.delete(p.asset);
       console.log("REDEEM:", p.asset);
       continue;
@@ -264,19 +261,15 @@ async function riskLoop() {
 
     if (pnl >= TP)
       await exitPosition(p.asset, Number(p.size), val, "TAKE PROFIT");
-
     if (pnl <= SL)
       await exitPosition(p.asset, Number(p.size), val, "STOP LOSS");
   }
 }
 
-async function cycle() {
-  await riskLoop();
+setInterval(riskLoop, RISK_INTERVAL_MS);
+setInterval(async () => {
   const markets = await scanMarkets();
   for (const m of markets) await tryBuy(m);
-}
-
-setInterval(cycle, SCAN_INTERVAL_MS);
-cycle();
+}, SCAN_INTERVAL_MS);
 
 console.log("Bot is running..");
