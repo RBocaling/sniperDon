@@ -10,10 +10,9 @@ const txnApi = new TransactionAPI({
 const provider = new JsonRpcProvider(process.env.POLYGON_RPC!);
 const wallet = new Wallet(process.env.POLYGON_PRIVATE_KEY!, provider);
 
-const SCAN_INTERVAL_MS = 60_000;
-const RISK_INTERVAL_MS = 30_000;
+const CYCLE_INTERVAL_MS = 60_000;
 
-const TRADE_USD = Number(5);
+const TRADE_USD = 5;
 
 const MIN_LIQ = 6_000;
 const MIN_PRICE = 0.06;
@@ -29,7 +28,6 @@ const MIN_SELL_VALUE = 1;
 
 const openPositions = new Set<string>();
 const locks = new Set<string>();
-const redeemedAssets = new Set<string>();
 
 const isNum = (v: any) => typeof v === "number" && Number.isFinite(v);
 const pct = (cur: number, avg: number) => (cur - avg) / avg;
@@ -56,7 +54,6 @@ function computeEdge(m: any): number {
 
 function scoreMarket(m: any): number {
   let s = 0;
-
   const price = Number(m.lastTradePrice ?? m.bestAsk ?? m.bestBid);
   const spread = Number(m.spread);
   const v24 = Number(m.volume24hr ?? m.volume);
@@ -103,7 +100,7 @@ async function scanMarkets(): Promise<any[]> {
     if (!isNum(liq) || liq < MIN_LIQ) return false;
 
     const edge = computeEdge(m);
-    if (!isNum(edge) || edge < EDGE_THRESHOLD) return false;
+    if (edge < EDGE_THRESHOLD) return false;
 
     return scoreMarket(m) >= 3;
   });
@@ -114,16 +111,11 @@ async function scanMarkets(): Promise<any[]> {
 
 async function tryBuy(m: any) {
   const tokenId = pickTokenId(m);
-  if (!tokenId) return;
-  if (openPositions.has(tokenId)) return;
-  if (locks.has(tokenId)) return;
+  if (!tokenId || openPositions.has(tokenId) || locks.has(tokenId)) return;
 
   locks.add(tokenId);
 
   try {
-    const edge = computeEdge(m);
-    console.log("EDGE:", edge, m.question ?? m.title);
-
     const res = await tools.callTools([
       {
         id: `buy-${Date.now()}`,
@@ -152,8 +144,6 @@ async function tryBuy(m: any) {
 
     openPositions.add(tokenId);
     console.log("✅ BUY:", m.question ?? m.title);
-  } catch (e: any) {
-    console.error("BUY ERROR:", e?.message ?? e);
   } finally {
     locks.delete(tokenId);
   }
@@ -165,9 +155,7 @@ async function exitPosition(
   value: number,
   reason: string
 ) {
-  if (locks.has(tokenId)) return;
-  if (!isNum(size) || size <= 0) return;
-  if (!isNum(value) || value < MIN_SELL_VALUE) return;
+  if (locks.has(tokenId) || value < MIN_SELL_VALUE) return;
 
   locks.add(tokenId);
 
@@ -205,85 +193,48 @@ async function exitPosition(
   }
 }
 
-// async function riskLoop() {
-//   const res = await tools.callTools([
-//     {
-//       id: "positions",
-//       type: "function",
-//       function: {
-//         name: "polymarket--127--getUserPositions",
-//         arguments: JSON.stringify({
-//           payload: JSON.stringify({
-//             user: wallet.address,
-//             limit: 50,
-//           }),
-//         }),
-//       },
-//     },
-//   ]);
+async function riskLoop() {
+  if (openPositions.size === 0) return;
 
-//   const raw = JSON.parse(res[0].content ?? "{}").payload;
-//   const positions = Array.isArray(raw)
-//     ? raw
-//     : Array.isArray(raw?.positions)
-//     ? raw.positions
-//     : [];
+  const res = await tools.callTools([
+    {
+      id: "positions",
+      type: "function",
+      function: {
+        name: "polymarket--127--getUserPositions",
+        arguments: JSON.stringify({
+          payload: JSON.stringify({ user: wallet.address, limit: 50 }),
+        }),
+      },
+    },
+  ]);
 
-//   for (const p of positions) {
-//     if (!p.asset || !isNum(p.size) || p.size <= 0) continue;
+  const raw = JSON.parse(res[0].content ?? "{}").payload;
+  const positions = Array.isArray(raw) ? raw : raw?.positions ?? [];
 
-//     const val = Number(p.currentValue);
+  for (const p of positions) {
+    if (!openPositions.has(p.asset)) continue;
 
-//     if (
-//       p.redeemable === true &&
-//       isNum(val) &&
-//       val > MIN_SELL_VALUE &&
-//       !redeemedAssets.has(p.asset)
-//     ) {
-//       redeemedAssets.add(p.asset);
+    const avg = Number(p.avgPrice);
+    const cur = Number(p.curPrice);
+    const val = Number(p.currentValue);
 
-//       await tools.callTools([
-//         {
-//           id: `redeem-${Date.now()}`,
-//           type: "function",
-//           function: {
-//             name: "polymarket--127--redeemPosition",
-//             arguments: JSON.stringify({
-//               payload: JSON.stringify({
-//                 conditionId: p.conditionId,
-//                 tokenId: p.asset,
-//               }),
-//             }),
-//           },
-//         },
-//       ]);
+    if (!isNum(avg) || !isNum(cur) || val < MIN_SELL_VALUE) continue;
 
-//       openPositions.delete(p.asset);
-//       console.log("REDEEM:", p.asset);
-//       continue;
-//     }
+    const pnl = pct(cur, avg);
 
-//     if (val <= MIN_SELL_VALUE) continue;
+    if (pnl >= TP) await exitPosition(p.asset, p.size, val, "TAKE PROFIT");
+    if (pnl <= SL) await exitPosition(p.asset, p.size, val, "STOP LOSS");
+  }
+}
 
-//     const avg = Number(p.avgPrice);
-//     const cur = Number(p.curPrice);
-//     if (!isNum(avg) || !isNum(cur)) continue;
-
-//     const pnl = pct(cur, avg);
-
-//     if (pnl >= TP)
-//       await exitPosition(p.asset, Number(p.size), val, "TAKE PROFIT");
-
-//     if (pnl <= SL)
-//       await exitPosition(p.asset, Number(p.size), val, "STOP LOSS");
-//   }
-// }
-
-
-// setInterval(riskLoop, RISK_INTERVAL_MS);
-setInterval(async () => {
+async function cycle() {
+  await riskLoop();
   const markets = await scanMarkets();
   for (const m of markets) await tryBuy(m);
-}, SCAN_INTERVAL_MS);
+}
 
-console.log("Bot is running..");
+setInterval(cycle, CYCLE_INTERVAL_MS);
+cycle();
+
+console.log("Bot is running (SAFE MODE)");
