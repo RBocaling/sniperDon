@@ -28,7 +28,7 @@ const MIN_24H_VOL = 1_000;
 
 const EDGE_THRESHOLD = 0.07;
 
-const TP = 0.7;
+const TP = 2.9;
 const SL = -0.3;
 const MIN_SELL_VALUE = 1;
 
