@@ -264,6 +264,8 @@ async function exitByRule(p: any, reason: string) {
 
 async function riskLoop() {
   const positions = await getActivePositions();
+  console.log("total position", positions.length);
+  
 
   for (const p of positions) {
     const avg = Number(p.avgPrice);
