@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { Tools, TransactionAPI } from "unifai-sdk";
-import { Wallet, JsonRpcProvider } from "ethers";
+import { Wallet, JsonRpcProvider, Contract } from "ethers";
 
 const tools = new Tools({ apiKey: process.env.UNIFAI_AGENT_API_KEY! });
 const txnApi = new TransactionAPI({
@@ -10,9 +10,15 @@ const txnApi = new TransactionAPI({
 const provider = new JsonRpcProvider(process.env.POLYGON_RPC!);
 const wallet = new Wallet(process.env.POLYGON_PRIVATE_KEY!, provider);
 
+const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
+const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, provider);
+
 const CYCLE_INTERVAL_MS = 60_000;
 
 const TRADE_USD = 5;
+const USDC_DECIMALS = 6;
+const MIN_USDC_BUFFER = 1;
 
 const MIN_LIQ = 6_000;
 const MIN_PRICE = 0.06;
@@ -26,11 +32,41 @@ const TP = 0.7;
 const SL = -0.3;
 const MIN_SELL_VALUE = 1;
 
-const openPositions = new Set<string>();
-const locks = new Set<string>();
-
 const isNum = (v: any) => typeof v === "number" && Number.isFinite(v);
 const pct = (cur: number, avg: number) => (cur - avg) / avg;
+
+async function getUsdcBalance(): Promise<number> {
+  const raw = await usdc.balanceOf(wallet.address);
+  return Number(raw) / 10 ** USDC_DECIMALS;
+}
+
+async function getActivePositions() {
+  const res = await tools.callTools([
+    {
+      id: "positions",
+      type: "function",
+      function: {
+        name: "polymarket--127--getUserPositions",
+        arguments: JSON.stringify({
+          payload: JSON.stringify({
+            user: wallet.address,
+            limit: 100,
+          }),
+        }),
+      },
+    },
+  ]);
+
+  const raw = JSON.parse(res[0].content ?? "{}").payload;
+
+  return (
+    Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.positions)
+      ? raw.positions
+      : []
+  ).filter((p: any) => Number(p.currentValue) > 1);
+}
 
 function pickTokenId(m: any): string | null {
   if (Array.isArray(m.tokenIds)) return m.tokenIds[0];
@@ -89,166 +125,162 @@ async function scanMarkets(): Promise<any[]> {
   const markets = events.flatMap((e: any) => e.markets || []);
   console.log("total market:", markets.length);
 
-  const filtered = markets.filter((m: any) => {
+  return markets.filter((m: any) => {
     if (!m.active || m.closed || !m.endDate) return false;
-
     const exp = new Date(m.endDate).getTime();
     if (exp < now + MIN_EXPIRY_MS) return false;
     if (exp > now + MAX_EXPIRY_MS) return false;
-
     const liq = Number(m.liquidityNum ?? m.liquidity);
     if (!isNum(liq) || liq < MIN_LIQ) return false;
-
-    const edge = computeEdge(m);
-    if (edge < EDGE_THRESHOLD) return false;
-
+    if (computeEdge(m) < EDGE_THRESHOLD) return false;
     return scoreMarket(m) >= 3;
   });
-
-  console.log("filtered market:", filtered.length);
-  return filtered;
 }
 
 async function tryBuy(m: any) {
   const tokenId = pickTokenId(m);
-  if (!tokenId || openPositions.has(tokenId) || locks.has(tokenId)) return;
+  if (!tokenId) return;
 
-  locks.add(tokenId);
+  const positions = await getActivePositions();
+  console.log("buy positions", positions);
+  
 
-  try {
-    const res = await tools.callTools([
-      {
-        id: `buy-${Date.now()}`,
-        type: "function",
-        function: {
-          name: "polymarket--127--marketOrderBuy",
-          arguments: JSON.stringify({
-            payload: JSON.stringify({
-              tokenId,
-              amount: TRADE_USD,
-              orderType: "FAK",
-            }),
-          }),
-        },
-      },
-    ]);
-
-    const txId = JSON.parse(res[0].content ?? "{}")?.payload?.txId;
-    if (!txId) return;
-
-    await txnApi.signAndSendTransaction(txId, {
-      address: wallet.address,
-      sendTransaction: (tx) => wallet.sendTransaction(tx),
-      signTypedData: wallet.signTypedData.bind(wallet),
-    });
-
-    openPositions.add(tokenId);
-    console.log("✅ BUY:", m.question ?? m.title);
-  } finally {
-    locks.delete(tokenId);
+  if (
+    positions.some(
+      (p: any) =>
+        (m.eventId && String(p.eventId) === String(m.eventId)) ||
+        (m.eventSlug && p.eventSlug === m.eventSlug)
+    )
+  ) {
+    console.log("⏭️ SKIP (EVENT ALREADY HAS POSITION):", m.title ?? m.question);
+    return;
   }
-}
 
-async function exitPosition(
-  tokenId: string,
-  size: number,
-  value: number,
-  reason: string
-) {
-  if (locks.has(tokenId) || value < MIN_SELL_VALUE) return;
+  const balance = await getUsdcBalance();
+  console.log("balance", balance);
 
-  locks.add(tokenId);
-
-  try {
-    const res = await tools.callTools([
-      {
-        id: `sell-${Date.now()}`,
-        type: "function",
-        function: {
-          name: "polymarket--127--marketOrderSell",
-          arguments: JSON.stringify({
-            payload: JSON.stringify({
-              tokenId,
-              size,
-              orderType: "FAK",
-            }),
-          }),
-        },
-      },
-    ]);
-
-    const txId = JSON.parse(res[0].content ?? "{}")?.payload?.txId;
-    if (!txId) return;
-
-    await txnApi.signAndSendTransaction(txId, {
-      address: wallet.address,
-      sendTransaction: (tx) => wallet.sendTransaction(tx),
-      signTypedData: wallet.signTypedData.bind(wallet),
-    });
-
-    openPositions.delete(tokenId);
-    console.log("EXIT:", reason, tokenId);
-  } finally {
-    locks.delete(tokenId);
+  if (balance < TRADE_USD + MIN_USDC_BUFFER) {
+    console.log(`⛔ SKIP BUY (LOW BALANCE): ${balance.toFixed(2)} USDC`);
+    return;
   }
-}
 
-function isEventEnded(p: any): boolean {
-  if (!p.endDate) return false;
-  const end = new Date(p.endDate).getTime();
-  return Date.now() >= end;
-}
-
-async function riskLoop() {
-  if (openPositions.size === 0) return;
+  console.log("EDGE:", computeEdge(m), m.question ?? m.title);
 
   const res = await tools.callTools([
     {
-      id: "positions",
+      id: `buy-${Date.now()}`,
       type: "function",
       function: {
-        name: "polymarket--127--getUserPositions",
+        name: "polymarket--127--marketOrderBuy",
         arguments: JSON.stringify({
-          payload: JSON.stringify({ user: wallet.address, limit: 50 }),
+          payload: JSON.stringify({
+            tokenId,
+            amount: TRADE_USD,
+            orderType: "FAK",
+          }),
         }),
       },
     },
   ]);
 
-  const raw = JSON.parse(res[0].content ?? "{}").payload;
-  const positions = Array.isArray(raw) ? raw : raw?.positions ?? [];
+  const txId = JSON.parse(res[0].content ?? "{}")?.payload?.txId;
+  if (!txId) return;
 
-  for (const p of positions) {
-    if (!openPositions.has(p.asset)) continue;
+  await txnApi.signAndSendTransaction(txId, {
+    address: wallet.address,
+    sendTransaction: (tx) => wallet.sendTransaction(tx),
+    signTypedData: wallet.signTypedData.bind(wallet),
+  });
 
-    const avg = Number(p.avgPrice);
-    const cur = Number(p.curPrice);
-    const val = Number(p.currentValue);
-
-    if (!isNum(avg) || !isNum(cur) || !isNum(val)) continue;
-    if (val < MIN_SELL_VALUE) continue;
-
-    //  EVENT ENDED → FORCE EXIT
-    if (isEventEnded(p)) {
-      await exitPosition(p.asset, p.size, val, "EVENT ENDED");
-      continue;
-    }
-
-    // NORMAL TP / SL
-    const pnl = pct(cur, avg);
-
-    if (pnl >= TP) {
-      await exitPosition(p.asset, p.size, val, "TAKE PROFIT");
-      continue;
-    }
-
-    if (pnl <= SL) {
-      await exitPosition(p.asset, p.size, val, "STOP LOSS");
-      continue;
-    }
-  }
+  console.log("✅ BUY:", m.question ?? m.title);
 }
 
+async function exitByRule(p: any, reason: string) {
+  if (p.currentValue < MIN_SELL_VALUE) return;
+
+  if (p.redeemable === true) {
+    const res = await tools.callTools([
+      {
+        id: `redeem-${Date.now()}`,
+        type: "function",
+        function: {
+          name: "polymarket--127--redeemPosition",
+          arguments: JSON.stringify({
+            payload: JSON.stringify({
+              tokenId: p.asset,
+              conditionId: p.conditionId,
+              currentValue: p.currentValue,
+              outcomeIndex: 0,
+              negativeRisk: false,
+            }),
+          }),
+        },
+      },
+    ]);
+
+    const txId = JSON.parse(res[0].content ?? "{}")?.payload?.txId;
+    if (!txId) return;
+
+    await txnApi.signAndSendTransaction(txId, {
+      address: wallet.address,
+      sendTransaction: (tx) => wallet.sendTransaction(tx),
+      signTypedData: wallet.signTypedData.bind(wallet),
+    });
+
+    console.log("REDEEM:", reason, p.asset);
+    return;
+  }
+
+  const res = await tools.callTools([
+    {
+      id: `sell-${Date.now()}`,
+      type: "function",
+      function: {
+        name: "polymarket--127--marketOrderSell",
+        arguments: JSON.stringify({
+          payload: JSON.stringify({
+            tokenId: p.asset,
+            size: p.size,
+            orderType: "FAK",
+          }),
+        }),
+      },
+    },
+  ]);
+
+  const txId = JSON.parse(res[0].content ?? "{}")?.payload?.txId;
+  if (!txId) return;
+
+  await txnApi.signAndSendTransaction(txId, {
+    address: wallet.address,
+    sendTransaction: (tx) => wallet.sendTransaction(tx),
+    signTypedData: wallet.signTypedData.bind(wallet),
+  });
+
+  console.log("SELL:", reason, p.asset);
+}
+
+async function riskLoop() {
+  const positions = await getActivePositions();
+  console.log("positions", positions);
+
+  for (const p of positions) {
+    const avg = Number(p.avgPrice);
+    const cur = Number(p.curPrice);
+
+    if (!isNum(avg) || !isNum(cur)) continue;
+
+    if (Date.now() >= new Date(p.endDate).getTime()) {
+      await exitByRule(p, "EVENT ENDED");
+      continue;
+    }
+
+    const pnl = pct(cur, avg);
+
+    if (pnl >= TP) await exitByRule(p, "TAKE PROFIT");
+    if (pnl <= SL) await exitByRule(p, "STOP LOSS");
+  }
+}
 
 async function cycle() {
   await riskLoop();
