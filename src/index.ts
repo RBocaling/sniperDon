@@ -125,7 +125,7 @@ async function scanMarkets(): Promise<any[]> {
   const markets = events.flatMap((e: any) => e.markets || []);
   console.log("total market:", markets.length);
 
-  return markets.filter((m: any) => {
+  const filtered =  markets.filter((m: any) => {
     if (!m.active || m.closed || !m.endDate) return false;
     const exp = new Date(m.endDate).getTime();
     if (exp < now + MIN_EXPIRY_MS) return false;
@@ -135,15 +135,17 @@ async function scanMarkets(): Promise<any[]> {
     if (computeEdge(m) < EDGE_THRESHOLD) return false;
     return scoreMarket(m) >= 3;
   });
+
+  console.log("filtered", filtered);
+  
+  return filtered;
 }
 
 async function tryBuy(m: any) {
   const tokenId = pickTokenId(m);
   if (!tokenId) return;
 
-  const positions = await getActivePositions();
-  console.log("buy positions", positions);
-  
+  const positions = await getActivePositions();  
 
   if (
     positions.some(
@@ -262,7 +264,6 @@ async function exitByRule(p: any, reason: string) {
 
 async function riskLoop() {
   const positions = await getActivePositions();
-  console.log("positions", positions);
 
   for (const p of positions) {
     const avg = Number(p.avgPrice);

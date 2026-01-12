@@ -9,6 +9,7 @@
     "unifai-tools-mcp": "dist/tools/mcp/server.js"
   },
   "scripts": {
+    "dev": "ts-node-dev -r dotenv/config --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "test": "jest"
   },
