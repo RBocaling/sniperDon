@@ -28,7 +28,7 @@ const MIN_24H_VOL = 1_000;
 
 const EDGE_THRESHOLD = 0.07;
 
-const TP = 2.9;
+const TP = 1.0;
 const SL = -0.3;
 const MIN_SELL_VALUE = 1;
 
@@ -273,10 +273,10 @@ async function riskLoop() {
 
     if (!isNum(avg) || !isNum(cur)) continue;
 
-    if (Date.now() >= new Date(p.endDate).getTime()) {
-      await exitByRule(p, "EVENT ENDED");
-      continue;
-    }
+    // if (Date.now() >= new Date(p.endDate).getTime()) {
+    //   await exitByRule(p, "EVENT ENDED");
+    //   continue;
+    // }
 
     const pnl = pct(cur, avg);
 
