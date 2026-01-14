@@ -28,7 +28,7 @@ const MIN_24H_VOL = 1_000;
 
 const EDGE_THRESHOLD = 0.07;
 
-const TP = 1.0;
+const TP = 2.0;
 const SL = -0.3;
 const MIN_SELL_VALUE = 1;
 
@@ -66,6 +66,33 @@ async function getActivePositions() {
       ? raw.positions
       : []
   ).filter((p: any) => Number(p.currentValue) > 1);
+}
+async function getAllPositions() {
+  const res = await tools.callTools([
+    {
+      id: "positions",
+      type: "function",
+      function: {
+        name: "polymarket--127--getUserPositions",
+        arguments: JSON.stringify({
+          payload: JSON.stringify({
+            user: wallet.address,
+            limit: 100,
+          }),
+        }),
+      },
+    },
+  ]);
+
+  const raw = JSON.parse(res[0].content ?? "{}").payload;
+
+  return (
+    Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.positions)
+      ? raw.positions
+      : []
+  );
 }
 
 function pickTokenId(m: any): string | null {
@@ -145,7 +172,7 @@ async function tryBuy(m: any) {
   const tokenId = pickTokenId(m);
   if (!tokenId) return;
 
-  const positions = await getActivePositions();  
+  const positions = await getAllPositions();  
 
   if (
     positions.some(
@@ -161,7 +188,7 @@ async function tryBuy(m: any) {
   const balance = await getUsdcBalance();
   console.log("balance", balance);
 
-  if (balance < TRADE_USD + MIN_USDC_BUFFER) {
+  if (balance < (TRADE_USD + MIN_USDC_BUFFER)) {
     console.log(`⛔ SKIP BUY (LOW BALANCE): ${balance.toFixed(2)} USDC`);
     return;
   }
@@ -262,6 +289,14 @@ async function exitByRule(p: any, reason: string) {
   console.log("SELL:", reason, p.asset);
 }
 
+
+function isEventEndedByDate(endDate: string): boolean {
+  if (!endDate) return false;
+
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return today > endDate;
+}
+
 async function riskLoop() {
   const positions = await getActivePositions();
   console.log("total position", positions.length);
@@ -273,10 +308,10 @@ async function riskLoop() {
 
     if (!isNum(avg) || !isNum(cur)) continue;
 
-    // if (Date.now() >= new Date(p.endDate).getTime()) {
-    //   await exitByRule(p, "EVENT ENDED");
-    //   continue;
-    // }
+    if (isEventEndedByDate(p.endDate)) {
+      await exitByRule(p, "EVENT ENDED");
+      continue;
+    }
 
     const pnl = pct(cur, avg);
 
