@@ -14,9 +14,9 @@ const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
 const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, provider);
 
-const CYCLE_INTERVAL_MS = 60_000;
+const CYCLE_INTERVAL_MS = 150_000;
 
-const TRADE_USD = 5;
+const TRADE_USD = 1;
 const USDC_DECIMALS = 6;
 const MIN_USDC_BUFFER = 1;
 
@@ -28,7 +28,7 @@ const MIN_24H_VOL = 1_000;
 
 const EDGE_THRESHOLD = 0.07;
 
-const TP = 2.0;
+// const TP = 2.0;
 const SL = -0.3;
 const MIN_SELL_VALUE = 1;
 
@@ -315,7 +315,7 @@ async function riskLoop() {
 
     const pnl = pct(cur, avg);
 
-    if (pnl >= TP) await exitByRule(p, "TAKE PROFIT");
+    // if (pnl >= TP) await exitByRule(p, "TAKE PROFIT");
     if (pnl <= SL) await exitByRule(p, "STOP LOSS");
   }
 }
