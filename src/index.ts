@@ -308,15 +308,15 @@ async function riskLoop() {
 
     if (!isNum(avg) || !isNum(cur)) continue;
 
-    if (isEventEndedByDate(p.endDate)) {
-      await exitByRule(p, "EVENT ENDED");
-      continue;
-    }
+    // if (isEventEndedByDate(p.endDate)) {
+    //   await exitByRule(p, "EVENT ENDED");
+    //   continue;
+    // }
 
     const pnl = pct(cur, avg);
 
     // if (pnl >= TP) await exitByRule(p, "TAKE PROFIT");
-    if (pnl <= SL) await exitByRule(p, "STOP LOSS");
+    // if (pnl <= SL) await exitByRule(p, "STOP LOSS");
   }
 }
 
