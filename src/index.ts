@@ -151,7 +151,7 @@ async function scanMarkets(): Promise<any[]> {
   const MAX_EXPIRY_MS = 2 * 24 * 60 * 60 * 1000;
 
   const markets = events.flatMap((e: any) => e.markets || []);
-  console.log("total market:", markets);
+  console.log("total market:", markets.length);
 
   const filtered =  markets.filter((m: any) => {
     if (!m.active || m.closed || !m.endDate) return false;
