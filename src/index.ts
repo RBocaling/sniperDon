@@ -14,7 +14,7 @@ const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
 const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, provider);
 
-const CYCLE_INTERVAL_MS = 150_000;
+const CYCLE_INTERVAL_MS = 120_000;
 
 const TRADE_USD = 1;
 const USDC_DECIMALS = 6;
