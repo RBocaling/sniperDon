@@ -144,13 +144,14 @@ async function scanMarkets(): Promise<any[]> {
 
   const payload = JSON.parse(res[0].content ?? "{}").payload;
   const events = Array.isArray(payload) ? payload : [];
+  
 
   const now = Date.now();
   const MIN_EXPIRY_MS = 30 * 60 * 1000;
   const MAX_EXPIRY_MS = 2 * 24 * 60 * 60 * 1000;
 
   const markets = events.flatMap((e: any) => e.markets || []);
-  console.log("total market:", markets.length);
+  console.log("total market:", markets);
 
   const filtered =  markets.filter((m: any) => {
     if (!m.active || m.closed || !m.endDate) return false;
@@ -205,7 +206,7 @@ async function tryBuy(m: any) {
           payload: JSON.stringify({
             tokenId,
             amount: TRADE_USD,
-            orderType: "FAK",
+            orderType: "FOK",
           }),
         }),
       },
@@ -270,7 +271,7 @@ async function exitByRule(p: any, reason: string) {
           payload: JSON.stringify({
             tokenId: p.asset,
             size: p.size,
-            orderType: "FAK",
+            orderType: "FOK",
           }),
         }),
       },
@@ -316,7 +317,7 @@ async function riskLoop() {
     const pnl = pct(cur, avg);
 
     // if (pnl >= TP) await exitByRule(p, "TAKE PROFIT");
-    // if (pnl <= SL) await exitByRule(p, "STOP LOSS");
+    if (pnl <= SL) await exitByRule(p, "STOP LOSS");
   }
 }
 
